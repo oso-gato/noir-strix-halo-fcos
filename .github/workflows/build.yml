@@ -1,0 +1,120 @@
+# .github/workflows/build.yml
+#
+# noir fortnightly ISO build & publish.
+#
+# Picks the latest Fedora CoreOS *stable* build, bumps build-iso.sh's BASE_ISO
+# pin, fetches the matching official live ISO (vendor base image — tier 3,
+# allowed; this is NOT a curl|sh install), runs ./build-iso.sh to produce both
+# noir-preserve.iso and noir-wipe.iso, and publishes them as assets on a
+# GitHub Release tagged v1.0.<run_number>.
+#
+# No secrets: only the auto-provided GITHUB_TOKEN (to create the Release).
+# House rules: the only thing apt-installs here is podman — CI tooling on the
+# runner, NOT a package layered onto the noir target image.
+
+name: build
+
+on:
+  # 06:00 UTC on the 1st and 15th of every month (fortnightly).
+  schedule:
+    - cron: "0 6 1,15 * *"
+  # Manual runs from the Actions tab.
+  workflow_dispatch:
+
+# GITHUB_TOKEN needs write to cut a Release; nothing else.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # podman runs the upstream coreos-installer container that build-iso.sh
+      # pulls. From Ubuntu's repos — runner tooling only, not a target install.
+      - name: Install podman
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman
+
+      # Query the FCOS stable stream and resolve the newest build: its version,
+      # the official live-ISO URL, and the published sha256. jq ships on the
+      # ubuntu-latest runner.
+      - name: Resolve latest FCOS stable
+        id: fcos
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          stream="$(curl -fsSL https://builds.coreos.fedoraproject.org/streams/stable.json)"
+          iso='.architectures.x86_64.artifacts.metal.formats.iso.disk'
+          ver="$(printf '%s' "$stream" | jq -r '.architectures.x86_64.artifacts.metal.release')"
+          url="$(printf '%s' "$stream" | jq -r "${iso}.location")"
+          sha="$(printf '%s' "$stream" | jq -r "${iso}.sha256")"
+          name="fedora-coreos-${ver}-live-iso.x86_64.iso"
+          test -n "$ver" && test "$ver" != "null"
+          test -n "$url" && test "$url" != "null"
+          echo "version=$ver"  >> "$GITHUB_OUTPUT"
+          echo "url=$url"       >> "$GITHUB_OUTPUT"
+          echo "sha256=$sha"    >> "$GITHUB_OUTPUT"
+          echo "iso=$name"      >> "$GITHUB_OUTPUT"
+          echo "FCOS stable build: $ver"
+          echo "Base ISO:          $name"
+
+      # Bump build-iso.sh's BASE_ISO pin to the resolved build. The sed pattern
+      # matches the line generically, so it works whatever the old version was.
+      - name: Pin BASE_ISO in build-iso.sh
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          sed -i -E "s|^BASE_ISO=\".*\"|BASE_ISO=\"${{ steps.fcos.outputs.iso }}\"|" build-iso.sh
+          grep -E '^BASE_ISO=' build-iso.sh
+
+      # Fetch the official vendor base image next to build-iso.sh and verify its
+      # published sha256 before building (tier-3 vendor artifact — allowed).
+      - name: Download FCOS live ISO
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          curl -fsSL -o "${{ steps.fcos.outputs.iso }}" "${{ steps.fcos.outputs.url }}"
+          echo "${{ steps.fcos.outputs.sha256 }}  ${{ steps.fcos.outputs.iso }}" | sha256sum -c -
+
+      # transpile noir.bu -> .ign (both variants), sync_check, then customize the
+      # base ISO into noir-preserve.iso + noir-wipe.iso via coreos-installer.
+      - name: Build ISOs
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          ./build-iso.sh
+
+      # First build (run_number=1) → v1.0.0; each subsequent run increments.
+      - name: Compute release version
+        id: ver
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          echo "patch=$(( ${{ github.run_number }} - 1 ))" >> "$GITHUB_OUTPUT"
+
+      # Publish both ISOs as Release assets; FCOS build recorded in the notes.
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ steps.ver.outputs.patch }}
+          name: noir v1.0.${{ steps.ver.outputs.patch }}
+          body: |
+            Automated noir ISO build.
+
+            Fedora CoreOS stable: ${{ steps.fcos.outputs.version }}
+            Base ISO: ${{ steps.fcos.outputs.iso }}
+
+            Assets:
+            - noir-preserve.iso — reinstalls the OS, KEEPS the 4 TB data drive.
+            - noir-wipe.iso     — reinstalls the OS, WIPES the 4 TB data drive.
+
+            No credentials are baked; set them on first boot with `sudo noir-setup`.
+          files: |
+            noir-preserve.iso
+            noir-wipe.iso
