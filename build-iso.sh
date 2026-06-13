@@ -243,6 +243,18 @@ print(f"build-iso: injected {len(lines)} key(s) into {os.path.basename(ign_path)
 PY
 done
 
+# Anti-brick gate: confirm each .ign (this variant's --dest-ignition, i.e. the
+# exact config written to the installed system) carries >=1 key for `core`.
+# Passwordless core + key-only SSH means zero keys = an unreachable host.
+for v in "${VARIANTS[@]}"; do
+  n="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); u=[x for x in d.get("passwd",{}).get("users",[]) if x.get("name")=="core"]; print(len(u[0].get("sshAuthorizedKeys",[])) if u else 0)' "$HERE/noir-${v}.ign")"
+  if [ "${n:-0}" -lt 1 ]; then
+    echo "build-iso: FAIL — noir-${v}.ign carries 0 SSH keys for core (would brick). Aborting." >&2
+    exit 1
+  fi
+  echo "build-iso: [OK] noir-${v}.ign carries $n SSH key(s) for core"
+done
+
 # ─── Build each variant ──────────────────────────────────────────────────────
 for VARIANT in "${VARIANTS[@]}"; do
   OUT_ISO="noir-${VARIANT}.iso"
@@ -267,17 +279,7 @@ for VARIANT in "${VARIANTS[@]}"; do
         -o "$OUT_ISO" \
         "$BASE_ISO"
 
-  # Anti-brick gate: confirm the baked ISO actually embeds keys for `core`.
-  baked_keys="$("$RUNTIME" run --rm \
-      --security-opt label=disable -v "$HERE":/data -w /data \
-      quay.io/coreos/coreos-installer:release \
-        iso ignition show "$OUT_ISO" 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); u=[x for x in d.get("passwd",{}).get("users",[]) if x.get("name")=="core"]; print(len(u[0].get("sshAuthorizedKeys",[])) if u else 0)' 2>/dev/null || echo 0)"
-  if [ "${baked_keys:-0}" -lt 1 ]; then
-    echo "build-iso: FAIL — $OUT_ISO embeds 0 SSH keys for core (unreachable host). Aborting." >&2
-    rm -f "$HERE/$OUT_ISO"; exit 1
-  fi
-  echo "build-iso: [OK] $OUT_ISO  ($baked_keys SSH key(s) embedded for core)"
+  echo "build-iso: [OK] $OUT_ISO"
 done
 
 # ─── Final summary ───────────────────────────────────────────────────────────

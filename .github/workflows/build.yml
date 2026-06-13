@@ -90,20 +90,27 @@ jobs:
           export LC_ALL=C
           ./build-iso.sh
 
-      # First build (run_number=1) → v1.0.0; each subsequent run increments.
-      - name: Compute release version
+      # Release version comes from CHANGELOG.md's top entry — the single source
+      # of truth. Decoupled from run_number, so a failed build never burns a
+      # version, and the published tag always matches the changelog.
+      - name: Read release version from CHANGELOG
         id: ver
         run: |
           set -euo pipefail
           export LC_ALL=C
-          echo "patch=$(( ${{ github.run_number }} - 1 ))" >> "$GITHUB_OUTPUT"
+          v="$(grep -m1 -oE '^## v[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | sed 's/^## //')"
+          test -n "$v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Release version (from CHANGELOG): $v"
 
       # Publish both ISOs as Release assets; FCOS build recorded in the notes.
+      # If the tag already exists (e.g. a fortnightly rebuild on a newer FCOS
+      # base at the same noir version), the release is refreshed in place.
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ steps.ver.outputs.patch }}
-          name: noir v1.0.${{ steps.ver.outputs.patch }}
+          tag_name: ${{ steps.ver.outputs.version }}
+          name: noir ${{ steps.ver.outputs.version }}
           body: |
             Automated noir ISO build.
 

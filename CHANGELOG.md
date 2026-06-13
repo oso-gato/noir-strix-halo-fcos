@@ -2,7 +2,7 @@
 
 ## v1.0.1 (2026-06-14)
 
-- **SSH keys are now pulled at build time, not baked.** The repo carries no key material. `build-iso.sh` fetches the account's current GitHub-published public keys (`github.com/oso-gato.keys`) and injects them into each ISO, tagging each by a short SHA256 fingerprint prefix (`oSo` / `Alchemist` / `Fatima`; unknown keys get a generic `oso-gato@github` tag). Change keys on GitHub → the next fortnightly build carries them. The build **hard-fails if it fetches zero keys** and verifies the baked ISO actually embeds them — passwordless `core` + key-only SSH means a keyless image would be an unreachable brick.
+- **SSH keys are now pulled at build time, not baked.** The repo carries no key material. `build-iso.sh` fetches the account's current GitHub-published public keys (`github.com/oso-gato.keys`) and injects them into each ISO, tagging each by a short SHA256 fingerprint prefix (`oSo` / `Alchemist` / `Fatima`; unknown keys get a generic `oso-gato@github` tag). Change keys on GitHub → the next fortnightly build carries them. The build **hard-fails if it fetches zero keys** and re-checks each `.ign` (the installed-system config) carries them before building — passwordless `core` + key-only SSH means a keyless image would be an unreachable brick.
 - Documentation/comment corrections from a post-publish audit (no functional change): docs now describe the shipped, public, credential-free v1.0.0 instead of design-phase placeholders.
 
 ## v1.0.0 (2026-06-13)
