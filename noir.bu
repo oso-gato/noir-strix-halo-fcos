@@ -96,9 +96,14 @@ passwd:
         - sudo
         - adm
         - systemd-journal
-      ssh_authorized_keys:
-        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICUwWXf++jqM/BFKhM2vpvggqmluPgVQFMmmApOsAk/h bear-alchemist_GitHub
-        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPrrgPxGleG3LBIf0STSnu1c1910KMBIaxubjx8oVUe6 bear-alchemist_1Password
+      # SSH keys are NOT baked. build-iso.sh fetches this account's current
+      # GitHub-published public keys (https://github.com/oso-gato.keys) at
+      # BUILD time and injects them here — so the repo stays key-free and every
+      # ISO carries oso-gato's current key set, each tagged by a short SHA256
+      # fingerprint prefix (oSo / Alchemist / Fatima; unknown keys → a generic
+      # provenance tag). The build HARD-FAILS if it fetches zero keys
+      # (anti-brick: passwordless core + key-only SSH = a keyless ISO is a brick).
+      ssh_authorized_keys: []
 
 # ─── Kernel ───────────────────────────────────────────────────────────────────
 # v0.7: kernel_arguments block intentionally empty.

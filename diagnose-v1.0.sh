@@ -458,19 +458,19 @@ else
   emit FAIL "sshd: NOT listening on port 22"
 fi
 
-# core user authorized_keys.d/ignition contains both SSH keys (patch 3+):
-# bear-alchemist_GitHub (Mac via 1Password agent) AND bear-alchemist_1Password (1Password).
+# core authorized_keys.d/ignition must hold >=1 SSH key. Keys are injected at
+# BUILD time from the account's GitHub-published set (github.com/oso-gato.keys),
+# each tagged by a SHA256 fingerprint (oSo/Alchemist/Fatima/…). The exact set is
+# whatever was current at build; the invariant that matters is "not zero" —
+# passwordless core + key-only SSH means zero keys = an unreachable host.
 ak="/var/home/core/.ssh/authorized_keys.d/ignition"
 if [ -f "$ak" ]; then
-  if grep -q 'bear-alchemist_GitHub' "$ak"; then
-    emit PASS "core authorized_keys.d/ignition: bear-alchemist_GitHub key present"
+  nkeys=$(grep -cE '^(ssh-|ecdsa-|sk-)' "$ak" 2>/dev/null || true)
+  if [ "${nkeys:-0}" -ge 1 ]; then
+    tags=$(awk '{print $NF}' "$ak" 2>/dev/null | paste -sd, - 2>/dev/null)
+    emit PASS "core authorized_keys.d/ignition: $nkeys key(s) present (${tags:-untagged})"
   else
-    emit FAIL "core authorized_keys.d/ignition: present but missing bear-alchemist_GitHub"
-  fi
-  if grep -q 'bear-alchemist_1Password' "$ak"; then
-    emit PASS "core authorized_keys.d/ignition: bear-alchemist_1Password key present"
-  else
-    emit FAIL "core authorized_keys.d/ignition: present but missing bear-alchemist_1Password"
+    emit FAIL "core authorized_keys.d/ignition: present but holds 0 SSH keys (host unreachable)"
   fi
 else
   emit FAIL "core authorized_keys.d/ignition: not found at $ak"

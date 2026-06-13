@@ -21,14 +21,16 @@ Detailed docs: **[`BUILD-SPEC.md`](BUILD-SPEC.md)** (design + full runbook) · *
 ## Wi-Fi control — `noir-wifi`
 `sudo noir-wifi on` raises the highest-priority configured slot (any slot beats `bond0` for internet); `off` reverts to the wired link; `switch <primary|secondary|tertiary>` selects a network; `set-primary <slot|SSID>` promotes one; `status` / `list` inspect. Tailscale's tailnet traffic stays on `bond0` regardless.
 
-## SSH from macOS via the 1Password agent
-The `core` user authorizes the public keys baked into `noir.bu`; their private halves live in 1Password. On macOS, with the 1Password **SSH agent** enabled (Settings → Developer), add a host entry — `ssh` presents the **public** key named in `IdentityFile`, and 1Password matches it to the vault item and signs (Touch ID), so the private key never touches disk:
+## SSH access — keys are pulled at build, not baked
+The repo bakes **no** SSH keys. At build time `build-iso.sh` fetches the account's **current** GitHub-published public keys (`https://github.com/oso-gato.keys`) and injects them into the image, each tagged by a short SHA256 fingerprint prefix; change the keys on GitHub and the next build picks them up. (The build hard-fails if it fetches zero keys, so it can never produce an unreachable image.) The private halves live in 1Password.
+
+On macOS, with the 1Password **SSH agent** enabled (Settings → Developer), add a host entry — `ssh` presents the **public** key named in `IdentityFile`, and 1Password matches it to the vault item and signs (Touch ID), so the private key never touches disk:
 
 ```bash
 printf '\n%s\n%s\n%s\n' \
   'Host noir noir.local' \
   '  User core' \
-  '  IdentityFile ~/.ssh/id_ed25519_bear-alchemist_GitHub.pub' \
+  '  IdentityFile ~/.ssh/oso-gato.pub' \
   >> ~/.ssh/config
 ```
 Your `Host *` block should already point `IdentityAgent` at `~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock`. Then `ssh core@noir.local`. (First boot is over the LAN; after Tailscale is up, `ssh noir` works via MagicDNS.)

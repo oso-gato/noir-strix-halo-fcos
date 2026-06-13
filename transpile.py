@@ -1193,10 +1193,10 @@ users = [
     {
         "name": "core",
         "groups": ["wheel", "sudo", "adm", "systemd-journal"],
-        "sshAuthorizedKeys": [
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICUwWXf++jqM/BFKhM2vpvggqmluPgVQFMmmApOsAk/h bear-alchemist_GitHub",
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPrrgPxGleG3LBIf0STSnu1c1910KMBIaxubjx8oVUe6 bear-alchemist_1Password",
-        ],
+        # SSH keys are NOT baked — build-iso.sh fetches github.com/oso-gato.keys
+        # at BUILD time and injects the current set (empty here keeps the repo
+        # key-free; the build hard-fails on zero keys). See build-iso.sh.
+        "sshAuthorizedKeys": [],
     }
 ]
 

@@ -25,6 +25,13 @@
 #                      only in 4 booleans on the 4 TB data drive.
 #   --pre-install    : guard.sh runs in the live env before any disk write,
 #                      aborting the install if the target doesn't match.
+#   SSH keys         : NOT from the repo. Fetched at build from the account's
+#                      GitHub-published public keys (KEYS_URL) and injected into
+#                      the .ign, tagged by a short SHA256 fingerprint prefix.
+#                      The build ABORTS if zero keys are fetched (anti-brick).
+#
+# Network at build time: reads KEYS_URL (github.com/<owner>.keys) over TLS — a
+#   data fetch of public keys, not a software install.
 #
 # Wipe-vs-preserve choice:
 #   FCOS does not natively support an interactive wipe/preserve picker on a
@@ -77,6 +84,22 @@ echo "build-iso: will build → ${VARIANTS[*]}"
 
 BASE_ISO="fedora-coreos-44.20260523.3.1-live-iso.x86_64.iso"
 GUARD="guard.sh"
+
+# ─── SSH authorized keys: fetched at BUILD time, never baked into the repo ────
+# The `core` user ships with NO keys in noir.bu/transpile.py. Here we pull the
+# account's CURRENT GitHub-published public keys and inject them into the .ign,
+# so every ISO carries oso-gato's live key set (change keys on GitHub → next
+# build picks them up). This is data retrieval over TLS, not a software install.
+#
+# Friendly tags are matched by a short SHA256 *fingerprint prefix* — the repo
+# never contains key material, only these hashes. Unknown keys (e.g. a freshly
+# rotated one) still get injected, tagged with $KEYS_OWNER@github.
+KEYS_URL="https://github.com/oso-gato.keys"
+KEYS_OWNER="oso-gato"
+# SHA256 fingerprint-prefix → tag.  Update if you rename/rotate; a miss is
+# harmless (key still injected, generic tag). As of v1.0.1: oSo, Alchemist,
+# Fatima. These are hashes, NOT key material — nothing about the keys leaks.
+KEY_TAGS_JSON='{"lzwcN0O7rzVy":"oSo","ozn1vY4/uPFX":"Alchemist","Kc4nBP37wttj":"Fatima"}'
 
 # Install target — 2 TB WD_BLACK SN850X (serial 25281F806642). guard.sh
 # re-verifies this at pre-install time.
@@ -155,6 +178,71 @@ echo "build-iso: inputs verified in $HERE"
 # guard.sh must be executable inside the live env
 chmod +x "$HERE/$GUARD"
 
+# ─── Fetch SSH authorized keys (build-time) and inject into each .ign ─────────
+# Pull the account's CURRENT GitHub public keys, keep only well-formed key
+# lines, and REFUSE to build a keyless (unreachable) ISO.
+echo "build-iso: fetching SSH public keys from $KEYS_URL"
+KEYS_RAW="$(mktemp)"; KEYS_FILE="$(mktemp)"
+trap 'rm -f "$KEYS_RAW" "$KEYS_FILE"' EXIT
+if ! curl -fsSL --retry 3 "$KEYS_URL" -o "$KEYS_RAW"; then
+  echo "build-iso: FAIL — could not fetch SSH keys from $KEYS_URL" >&2
+  exit 1
+fi
+grep -E '^(ssh-(ed25519|rsa)|ecdsa-sha2-[a-z0-9-]+|sk-(ssh-ed25519|ecdsa-sha2-)[a-z0-9-]*) [A-Za-z0-9+/]+=* ?' \
+  "$KEYS_RAW" > "$KEYS_FILE" || true
+KEY_COUNT="$(grep -c . "$KEYS_FILE" 2>/dev/null || echo 0)"
+if [ "${KEY_COUNT:-0}" -lt 1 ]; then
+  echo "build-iso: FAIL — fetched 0 valid SSH keys from $KEYS_URL." >&2
+  echo "  core is passwordless and SSH is key-only, so a keyless ISO is unreachable." >&2
+  echo "  Refusing to build a brick. Confirm the account has published keys, then retry." >&2
+  exit 1
+fi
+echo "build-iso: [OK] fetched $KEY_COUNT SSH key(s) from $KEYS_OWNER"
+
+for v in "${VARIANTS[@]}"; do
+  KEYS_FILE="$KEYS_FILE" KEYS_OWNER="$KEYS_OWNER" KEY_TAGS_JSON="$KEY_TAGS_JSON" \
+    python3 - "$HERE/noir-${v}.ign" <<'PY'
+import base64, hashlib, json, os, sys
+
+ign_path = sys.argv[1]
+owner    = os.environ["KEYS_OWNER"]
+tag_map  = json.loads(os.environ["KEY_TAGS_JSON"])
+
+def tag_for(body):
+    # SSH SHA256 fingerprint of the raw key blob, matched by a short prefix.
+    fp = base64.b64encode(hashlib.sha256(base64.b64decode(body)).digest()).decode().rstrip("=")
+    for prefix, name in tag_map.items():
+        if fp.startswith(prefix):
+            return name
+    return owner + "@github"
+
+lines = []
+with open(os.environ["KEYS_FILE"]) as fh:
+    for ln in fh:
+        ln = ln.strip()
+        if not ln:
+            continue
+        parts = ln.split()
+        lines.append(f"{parts[0]} {parts[1]} {tag_for(parts[1])}")
+
+if not lines:
+    sys.exit("build-iso: FAIL — no keys to inject (refusing to build a keyless ISO)")
+
+with open(ign_path) as fh:
+    ign = json.load(fh)
+core = next((u for u in ign.setdefault("passwd", {}).setdefault("users", [])
+             if u.get("name") == "core"), None)
+if core is None:
+    sys.exit(f"build-iso: FAIL — no 'core' user in {ign_path}")
+core["sshAuthorizedKeys"] = lines
+with open(ign_path, "w") as fh:
+    json.dump(ign, fh, separators=(",", ":"))
+
+print(f"build-iso: injected {len(lines)} key(s) into {os.path.basename(ign_path)}"
+      f"  ->  " + ", ".join(l.rsplit(' ', 1)[1] for l in lines))
+PY
+done
+
 # ─── Build each variant ──────────────────────────────────────────────────────
 for VARIANT in "${VARIANTS[@]}"; do
   OUT_ISO="noir-${VARIANT}.iso"
@@ -179,7 +267,17 @@ for VARIANT in "${VARIANTS[@]}"; do
         -o "$OUT_ISO" \
         "$BASE_ISO"
 
-  echo "build-iso: [OK] $OUT_ISO"
+  # Anti-brick gate: confirm the baked ISO actually embeds keys for `core`.
+  baked_keys="$("$RUNTIME" run --rm \
+      --security-opt label=disable -v "$HERE":/data -w /data \
+      quay.io/coreos/coreos-installer:release \
+        iso ignition show "$OUT_ISO" 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); u=[x for x in d.get("passwd",{}).get("users",[]) if x.get("name")=="core"]; print(len(u[0].get("sshAuthorizedKeys",[])) if u else 0)' 2>/dev/null || echo 0)"
+  if [ "${baked_keys:-0}" -lt 1 ]; then
+    echo "build-iso: FAIL — $OUT_ISO embeds 0 SSH keys for core (unreachable host). Aborting." >&2
+    rm -f "$HERE/$OUT_ISO"; exit 1
+  fi
+  echo "build-iso: [OK] $OUT_ISO  ($baked_keys SSH key(s) embedded for core)"
 done
 
 # ─── Final summary ───────────────────────────────────────────────────────────

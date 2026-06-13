@@ -12,7 +12,7 @@ Make `oso-gato/noir-strix-halo-fcos` a **public** repo whose **fortnightly GitHu
 ### Credentials
 - **No build-time hash injection.** The fortnightly CI runner has no secret to inject, so there is none. `resolve_core_password_hash()` and the `.core-pw-hash` file are gone; `noir.bu`/`transpile.py` bake no `password_hash`, and `sync_check.py` simply asserts none is present.
 - **`core` ships passwordless.** `noir.bu` carries **no** `password_hash`. SSH-key login + passwordless-sudo still work; Cockpit web login is disabled until first-boot setup sets the password.
-- SSH public keys (`bear-alchemist_GitHub`, `bear-alchemist_1Password`) stay baked (public keys are safe).
+- SSH keys are **not baked** — `build-iso.sh` fetches the account's current GitHub-published keys (`github.com/oso-gato.keys`) at build time and injects them into the `.ign` (each tagged by a short SHA256 fingerprint prefix; the build aborts on zero keys). Change keys on GitHub → the next build carries them.
 
 ### Wi-Fi
 - **Replace the three SSID-named profiles** (`otherside`/`circus`/`zookeeper`) with **generic slots**, no SSID/PSK baked:

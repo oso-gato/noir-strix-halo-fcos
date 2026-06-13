@@ -35,7 +35,7 @@ See `BUILD-SPEC.md` for the full spec + runbook. Summary:
 - **Wi-Fi = three generic slots** `wifi-primary/secondary/tertiary`, **all `route-metric=50`** (any beats bond0's 100; priority 100/90/80 only orders which connects). No SSID/PSK in the repo — `noir-setup` generates the keyfiles at first boot. Helper **`noir-wifi`**: `on|off|switch <slot>|status|list|set-primary <slot>`.
 - **`noir-setup`** ("Both" mode, boot-2 gated): Core password → Wi-Fi slots → Tailscale onboarding; persists password hash + Wi-Fi keyfiles + `tailscaled.state` to the data drive.
 - **Routing:** pin **only** Tailscale's underlay to bond0 (`fwmark 0x80000 → table 100 via 10.0.50.1`, v4+v6). **Exit-node dropped**, subnet router kept → no `iif tailscale0` rules, no `rp_filter` change.
-- **SSH keys:** `bear-alchemist_GitHub` + **`bear-alchemist_1Password`** (renamed from `_iOS`).
+- **SSH keys:** NOT baked — `build-iso.sh` fetches the account's **current** GitHub-published keys (`github.com/oso-gato.keys`) at build time and injects them, each tagged by a short SHA256 fingerprint prefix (the repo holds only the hash prefixes, never key material). The build **hard-fails on zero keys** (anti-brick: passwordless `core` + key-only SSH means a keyless ISO is unreachable).
 - **CI:** fortnightly GitHub Actions builds both ISOs from the latest FCOS stable, publishes a Release (`v1.0.0`+). No secrets needed.
 
 ## Current state (keep this updated)
