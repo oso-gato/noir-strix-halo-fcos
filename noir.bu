@@ -26,7 +26,7 @@
 # Two ISOs:  noir-preserve.iso (default, leaves the 4 TB drive alone if its
 #            layout matches), and noir-wipe.iso (destroys whatever's on the
 #            4 TB drive, recreates per spec). Both built from this file by
-#            ./build-iso.sh. ISO names are unchanged from v0.4.
+#            ./build-iso.sh.
 #
 # Design rationale (v1.0.0)
 # ------------------------
@@ -77,18 +77,17 @@ version: 1.6.0
 # systemd-journal for unprivileged journal access. SSH key is the GitHub-
 # published public key whose private half lives in 1Password.
 #
-# password_hash (v0.6, NEW): required for Cockpit web login. PAM cannot
-# authenticate against an SSH key, so Cockpit's login form needs a password
-# stored in /etc/shadow. Same password covers Cockpit web auth + sudo.
-# Mint locally on macOS (htpasswd ships in Apache, on the system PATH):
-#     read -rs PW && printf '%s' "$PW" | htpasswd -niB -C 12 core | cut -d: -f2; unset PW
-# Output starts with $2y$ — substitute the FULL string below AND in
-# transpile.py's users[] dict. sync_check.py fail-fasts on the
-# placeholder string and on any non-bcrypt prefix ($2a$ / $2b$ / $2y$).
+# NO password is baked. `core` ships passwordless: there is no `password_hash`
+# key below — never add one (the credential-free design; see AGENTS.md /
+# BUILD-SPEC.md). The core password is set at FIRST BOOT by `noir-setup` (via
+# `chpasswd`) and persisted to the data drive so a preserve re-flash restores
+# it. Until then Cockpit web login is disabled; SSH-key login + passwordless-
+# sudo work from boot 1.
 #
-# SSH-side: stays key-only. The bcrypt password is reachable only via PAM
-# (Cockpit web login + `su` / `sudo` on the host), NOT via tailnet-facing
-# sshd — sshd's default policy on FCOS rejects PasswordAuthentication.
+# SSH-side: stays key-only regardless. Once a password is set at first boot it
+# is reachable only via PAM (Cockpit web login + `su` / `sudo` on the host),
+# NOT via tailnet-facing sshd — sshd's default policy on FCOS rejects
+# PasswordAuthentication.
 passwd:
   users:
     - name: core
@@ -400,7 +399,7 @@ storage:
           MaxStartups = 10
 
     # ─── noir-wifi: Wi-Fi uplink control across three slots ──────────────────
-    # Replaces noir-wifi. The wifi-primary/secondary/tertiary slot keyfiles
+    # Replaces noir-otherside. The wifi-primary/secondary/tertiary slot keyfiles
     # all declare route-metric=50, so any associated Wi-Fi beats bond0
     # (metric=100); only one associates at a time on wlp99s0. NetworkManager
     # does not auto-roam between distinct SSIDs, so the operator triggers slot

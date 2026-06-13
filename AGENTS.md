@@ -21,15 +21,15 @@ A headless **Fedora CoreOS** host on a **Minisforum MS-S1 MAX** (AMD Strix Halo 
 5. **VERIFY FIRST.** Fact-check any source/version/repo against the live upstream before changing it (and record the date).
 6. **NO BAKED SECRETS.** No password, Wi-Fi PSK, or token in the repo or the built images. Credentials are set at first boot (see below). Serials are the **only** hardware identifier intentionally baked (a fingerprint, not a credential).
 7. **EXPOSURE.** Public IP carries **key-only SSH** only. Cockpit and everything sensitive are **tailnet-only**.
-8. **GUARDRAILS ARE CODE.** Agent rules live in this repo (`AGENTS.md` + `policy/managed-settings.json`). Changing the rules = editing the repo. An undocumented change is a failure even if it works.
+8. **GUARDRAILS ARE CODE.** Agent rules live in this repo (this `AGENTS.md`, plus `HARDWARE.md`/`BUILD-SPEC.md`). Changing the rules = editing the repo. An undocumented change is a failure even if it works.
 
 ## Non-negotiable build facts — you WILL break the build if you ignore these
 1. **Dual-maintenance, gated by `sync_check`.** `noir.bu` (Butane source) and `transpile.py` (a hand-written transpiler that emits the same Ignition) must be edited **in lockstep** — every keyfile, unit, and script body exists in **both**. A change only counts when `sync_check.py` prints clean. Never touch one without mirroring the other.
 2. **Wi-Fi does NOT exist on the first boot — setup is a SECOND-boot event.** FCOS base ships no MediaTek MT7925 firmware and no NetworkManager-wifi plugin. `noir-firstboot-install` rpm-ostree-**layers** them (Tier-1 Fedora packages: `mt7xxx-firmware`/`NetworkManager-wifi`/`wpa_supplicant`/`wireless-regdb`) on **boot 1** and then **reboots** (rpm-ostree layers apply only on reboot). So `wlp99s0` only appears on **boot 2**. The first-boot setup (`noir-setup`) must therefore activate **only on boot 2** (`ConditionPathExists=!/var/lib/noir/firstboot.stamp` + `After=noir-firstboot-enable.service`), **never `ConditionFirstBoot`**. The wired NIC (RTL8127A, in-tree `r8169`) + SSH-by-key ARE up from boot 1.
 3. **No credentials baked.** Core password + Wi-Fi SSID/PSK + Tailscale onboarding are all set at **first boot** by `noir-setup` (tty1 *or* SSH, `flock` + completion sentinel = first-one-wins), and persisted to the data drive so a *preserve* re-flash restores them. The CI build has no secret to inject — never reintroduce build-time credential injection.
-4. **Pre-public scrub.** Before the repo is public, its history must be re-initialised to a single clean commit (purging the old bcrypt hash in `.ign` + old versions). Serials stay; the **bcrypt hash must not** survive in history.
+4. **No secrets in history (maintained invariant).** The history was re-initialised to a single clean `v1.0.0` commit; no bcrypt hash or Wi-Fi PSK survives in any commit, and the public images bake none. Serials stay (a fingerprint, not a credential). Keep it that way — never reintroduce a baked hash/PSK or commit a secret back into history.
 
-## The design (what's specified; build it in `sync_check`-gated increments)
+## The design (as built in v1.0.0)
 See `BUILD-SPEC.md` for the full spec + runbook. Summary:
 - **Passwordless `core`**; password set at first boot. Injection mechanism removed.
 - **Wi-Fi = three generic slots** `wifi-primary/secondary/tertiary`, **all `route-metric=50`** (any beats bond0's 100; priority 100/90/80 only orders which connects). No SSID/PSK in the repo — `noir-setup` generates the keyfiles at first boot. Helper **`noir-wifi`**: `on|off|switch <slot>|status|list|set-primary <slot>`.
@@ -39,5 +39,5 @@ See `BUILD-SPEC.md` for the full spec + runbook. Summary:
 - **CI:** fortnightly GitHub Actions builds both ISOs from the latest FCOS stable, publishes a Release (`v1.0.0`+). No secrets needed.
 
 ## Current state (keep this updated)
-- Shipping code in `noir.bu`/`transpile.py` is **patch-4-era** (FCOS `44.20260523.3.1`) and **still contains the old Wi-Fi PSKs + the real bcrypt hash** — it is **not** the design above. The design is **specified, not yet built**. Build it in tested, `sync_check`-gated increments; do not claim any of it "done" until the gate is green; do not flip the repo public until a secret scan is clean.
-- GitHub: `oso-gato/noir-strix-halo-fcos` (private until the rework + scrub land). Working snapshots also in Google Drive under `…/noir v1.0 - FCOS+tailscale+cockpit (final)/v1.0 FCOS final - patch5/`.
+- Shipping code in `noir.bu`/`transpile.py` **is** the credential-free design above, released as **v1.0.0** (base FCOS `44.20260523.3.1`, pinned in `build-iso.sh`): passwordless `core` (no `password_hash`), generic `wifi-primary/secondary/tertiary` slots filled at first boot, no baked PSKs, no bcrypt hash in repo or history, exit-node dropped (subnet router kept). `sync_check.py` gates `noir.bu`↔`transpile.py` in lockstep — keep it green.
+- GitHub: `oso-gato/noir-strix-halo-fcos` — **public**; released `v1.0.0` (2026-06-13) from a single clean re-initialised commit (old hash + PSKs purged from history). CI builds both ISOs from the latest FCOS stable and publishes each as a Release.

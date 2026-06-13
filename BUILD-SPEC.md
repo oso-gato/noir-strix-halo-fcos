@@ -1,60 +1,60 @@
-# noir — patch 5 build spec & runbook
+# noir — design spec & runbook (v1.0.0)
 
-Status legend:  ✅ already done in patch5 · 🔧 to build in this pass · ⬚ unchanged from patch4
+Section 1 records the change-set that produced **v1.0.0** (every item shipped). Sections 2–3 are the as-built design + end-to-end runbook.
 
 ## 0. Goal
 Make `oso-gato/noir-strix-halo-fcos` a **public** repo whose **fortnightly GitHub Actions build publishes two credential-free install ISOs**. No secret (password, Wi-Fi PSK) is ever baked or injected; the operator sets them on first boot. Hardware serials stay baked (accepted). Tailscale stays anchored to the wired bond; only general internet rides Wi-Fi when raised.
 
 ---
 
-## 1. Change set (patch4 → patch5), file by file
+## 1. What v1.0.0 established, file by file
 
 ### Credentials
-- 🔧 **Remove build-time hash injection entirely.** The fortnightly CI runner has no secret to inject, so injection is pointless. Delete `resolve_core_password_hash()` from `transpile.py`, the `.core-pw-hash` file, and the injection bits in `sync_check.py`/`.gitignore`/`README`.
-- 🔧 **`core` ships passwordless.** `noir.bu` carries **no** `password_hash`. SSH-key login + passwordless-sudo still work; Cockpit web login is disabled until first-boot setup sets the password.
-- ⬚ SSH public keys (`bear-alchemist_GitHub`, `bear-alchemist_1Password`) stay baked (public keys are safe).
+- **No build-time hash injection.** The fortnightly CI runner has no secret to inject, so there is none. `resolve_core_password_hash()` and the `.core-pw-hash` file are gone; `noir.bu`/`transpile.py` bake no `password_hash`, and `sync_check.py` simply asserts none is present.
+- **`core` ships passwordless.** `noir.bu` carries **no** `password_hash`. SSH-key login + passwordless-sudo still work; Cockpit web login is disabled until first-boot setup sets the password.
+- SSH public keys (`bear-alchemist_GitHub`, `bear-alchemist_1Password`) stay baked (public keys are safe).
 
 ### Wi-Fi
-- 🔧 **Replace the three SSID-named profiles** (`otherside`/`circus`/`zookeeper`) with **generic slots**, no SSID/PSK baked:
+- **Replace the three SSID-named profiles** (`otherside`/`circus`/`zookeeper`) with **generic slots**, no SSID/PSK baked:
   - `wifi-primary` — autoconnect-priority 100, **route-metric 50**
   - `wifi-secondary` — autoconnect-priority 90, **route-metric 50**
   - `wifi-tertiary` — autoconnect-priority 80, **route-metric 50**
   - **All three supersede bond0** for noir's internet (metric 50 < bond0's 100). The priority chain (100/90/80) only decides *which* one connects when several are in range — only one Wi-Fi is active at a time on the single radio.
-- 🔧 **Rename helper** `noir-otherside` → `noir-wifi` (raises the highest-priority available slot), add `set-primary` subcommand.
+- **Rename helper** `noir-otherside` → `noir-wifi` (raises the highest-priority available slot), add `set-primary` subcommand.
 
 ### First-boot setup
-- 🔧 **`/usr/local/bin/noir-setup`** — interactive setter: Core password → each Wi-Fi slot's SSID + PSK (each skippable) → **Tailscale onboarding** (`tailscale up --hostname=noir --advertise-routes=10.0.50.0/24`; prints the auth URL to approve). Applies password via `chpasswd`, writes the NM keyfiles + `nmcli connection reload`. Then saves a copy of **all** of it — password hash, Wi-Fi keyfiles, **and `/var/lib/tailscale/tailscaled.state`** (the node identity) — to the data drive and writes a completion sentinel.
-- 🔧 **`noir-firstboot-setup.service`** ("Both" mode).
+- **`/usr/local/bin/noir-setup`** — interactive setter: Core password → each Wi-Fi slot's SSID + PSK (each skippable) → **Tailscale onboarding** (`tailscale up --hostname=noir --advertise-routes=10.0.50.0/24`; prints the auth URL to approve). Applies password via `chpasswd`, writes the NM keyfiles + `nmcli connection reload`. Then saves a copy of **all** of it — password hash, Wi-Fi keyfiles, **and `/var/lib/tailscale/tailscaled.state`** (the node identity) — to the data drive and writes a completion sentinel.
+- **`noir-firstboot-setup.service`** ("Both" mode).
   - **Boot sequencing (critical — Wi-Fi isn't up on the first boot):** `noir-firstboot-install` rpm-ostree-layers `NetworkManager-wifi`/`wpa_supplicant`/`mt7xxx-firmware`/`wireless-regdb` on boot 1 and **reboots**, so `wlp99s0` only exists on the **post-layering (second) boot**. This service therefore gates on `ConditionPathExists=!/var/lib/noir/firstboot.stamp` + `After=noir-firstboot-enable.service NetworkManager-wait-online.service` — the **same gate the enable service uses** — so it fires only once Wi-Fi *and* `tailscaled` are live. **Do NOT use `ConditionFirstBoot`** (that's the too-early boot-1).
   - On that boot: persisted creds on the data drive (preserve) → restore silently, done;
   - else if a console is attached → run `noir-setup` on `tty1`;
   - else (headless) → MOTD banner: `ssh in && sudo noir-setup`.
   - A `flock` + completion **sentinel** make it first-one-wins (tty1 *or* SSH); the loser no-ops.
   - `noir-setup` also **probes Wi-Fi readiness** itself: if it's run during the brief boot-1 window (operator SSH'd in before the auto-reboot), it sets the **password** but **defers Wi-Fi** with "Wi-Fi support is still layering — the host will reboot once; re-run `sudo noir-setup` after it returns."
-- 🔧 **`noir-firstboot-restore`** path of the same service handles preserve restore.
+- **`noir-firstboot-restore`** path of the same service handles preserve restore.
 
 ### Routing (split, exit-node dropped)
-- 🔧 **Tailscale underlay pinned to bond0** — in the `bond0` NM keyfile (`[ipv4]`+`[ipv6]`):
+- **Tailscale underlay pinned to bond0** — in the `bond0` NM keyfile (`[ipv4]`+`[ipv6]`):
   - `routing-rule: priority 5200 fwmark 0x80000/0xff0000 table 100`
   - `route: default via 10.0.50.1 dev bond0 table 100`
-- 🔧 **Drop `--advertise-exit-node`** from the `tailscale up` line; keep `--advertise-routes=10.0.50.0/24`.
-- ⬚ Subnet router (`10.0.50.0/24`) needs **no special routing** — LAN uses bond0's connected route automatically.
-- ⬚ `ip_forward` sysctl stays (subnet routing). **No `rp_filter` change** (that was only needed for the now-removed exit node).
-- ⬚ **Scope of this rule (important):** it pins **only Tailscale's own tailnet/underlay traffic** — the sockets `tailscaled` marks `0x80000` — to bond0. Nothing else is affected: noir's own internet, the LAN, and all other unmarked traffic follow the normal default route untouched.
-- ⬚ Any raised Wi-Fi slot (all metric 50) owns the **default route** for noir's own internet; bond0 carries it when no Wi-Fi is up.
+- **Drop `--advertise-exit-node`** from the `tailscale up` line; keep `--advertise-routes=10.0.50.0/24`.
+- Subnet router (`10.0.50.0/24`) needs **no special routing** — LAN uses bond0's connected route automatically.
+- `ip_forward` sysctl stays (subnet routing). **No `rp_filter` change** (that was only needed for the now-removed exit node).
+- **Scope of this rule (important):** it pins **only Tailscale's own tailnet/underlay traffic** — the sockets `tailscaled` marks `0x80000` — to bond0. Nothing else is affected: noir's own internet, the LAN, and all other unmarked traffic follow the normal default route untouched.
+- Any raised Wi-Fi slot (all metric 50) owns the **default route** for noir's own internet; bond0 carries it when no Wi-Fi is up.
 
 ### Gateway helper
-- 🔧 Table-100 default is hardcoded `via 10.0.50.1`; a small **`noir-table100.timer`/oneshot** reconciles it if the DHCP gateway ever changes.
+- Table-100 default is hardcoded `via 10.0.50.1`; a small **`noir-table100.timer`/oneshot** reconciles it if the DHCP gateway ever changes.
 
 ### Hardware / serials
-- ⬚ Both NVMe serials stay baked (`build-iso.sh` dest-device, `noir.bu` data disk, `guard.sh`).
+- Both NVMe serials stay baked (`build-iso.sh` dest-device, `noir.bu` data disk, `guard.sh`).
 
 ### Mirroring & gate
-- 🔧 Every `noir.bu` change is **mirrored in `transpile.py`**; build gates on `sync_check.py` (must print clean).
-- 🔧 Update `diagnose-v1.0.sh` (drop password/exit-node assertions, add Wi-Fi-slot + routing checks), MOTD, `README`, `CHANGELOG`, `PATCH-NOTES`.
+- Every `noir.bu` change is **mirrored in `transpile.py`**; build gates on `sync_check.py` (must print clean).
+- `diagnose-v1.0.sh` (no password/exit-node assertions; Wi-Fi-slot + routing checks), the MOTD, `README`, and `CHANGELOG` all reflect the credential-free design.
 
 ### CI
-- 🔧 Add `.github/workflows/build.yml` — fortnightly cron: pick latest FCOS stable, bump the pin, build both ISOs, publish as a GitHub Release. No secrets needed.
+- Add `.github/workflows/build.yml` — fortnightly cron: pick latest FCOS stable, bump the pin, build both ISOs, publish as a GitHub Release. No secrets needed.
 
 ---
 
@@ -117,5 +117,5 @@ Trade-off (accepted): because the underlay is pinned, if bond0's internet ever f
 
 ---
 
-## 4. Pre-public prerequisite (independent of the above)
-The current pushed commit `2d64f2d` still contains the real bcrypt hash inside committed `.ign` files **and** the serials in README/comments/history. Before flipping public: rebuild a clean history (re-init or `git filter-repo`) from the patch5 tree. The serials are intentionally kept; the **bcrypt hash must not** survive in history.
+## 4. Pre-public history scrub (completed at v1.0.0)
+Before going public, the git history was re-initialised from the v1.0.0 tree to a single clean commit, so **no bcrypt hash or Wi-Fi PSK survives in any commit** (earlier private commits that carried a baked hash inside `.ign` files are gone). The drive serials in `README`/comments are intentionally kept (a fingerprint, not a credential). Keep this invariant — never commit a secret back into history.

@@ -6,22 +6,24 @@ Compares the Butane source against the transpiled Ignition output across
 the surfaces that matter:
 
   1. Version headers (variant + spec versions)
-  2. Users (groups + SSH keys + password_hash drift, bcrypt prefix gate,
-     REPLACE_WITH_* placeholder gate — v0.6)
+  2. Users (groups + SSH keys; password_hash is normally absent — the gate
+     asserts the two sides agree and, if a hash is ever present, that it is
+     a valid bcrypt and not a leftover placeholder)
   3. Kernel arguments
   4. storage.disks (device, wipe_table, partitions)
   5. storage.filesystems (device, format, path, label, uuid, options)
-  6. storage.files (path set + per-file mode + per-file body byte-for-byte
-     plus REPLACE_WITH_* placeholder gate across all file bodies — v0.6)
+  6. storage.files (path set + per-file mode + per-file body byte-for-byte,
+     plus a REPLACE_WITH_* placeholder gate across all file bodies)
   7. systemd units (Butane with_mount_unit:true expands to <escaped>.mount,
                     so the verifier expands the Butane side before comparison)
 
 Only noir-preserve.ign is checked — noir-wipe.ign is the same source with
 four booleans flipped, so if preserve syncs, wipe syncs by construction.
 
-v0.6 gates:
-  - bcrypt prefix: passwordHash MUST start with $2a$, $2b$, or $2y$. Cockpit's
-    PAM stack expects bcrypt; SHA-512 ($6$) etc. would be rejected at login.
+Defensive gates (dormant under the credential-free design, which bakes no
+secrets — they only fire if one is ever introduced):
+  - bcrypt prefix: if a passwordHash is present it MUST start with $2a$, $2b$,
+    or $2y$ (Cockpit's PAM stack expects bcrypt; SHA-512 ($6$) etc. is rejected).
   - REPLACE_WITH_*: any user/file body containing REPLACE_WITH_* is a
     forgotten substitution → fail-fast before flashing a non-functional host.
 
@@ -98,10 +100,12 @@ for bu_u, ign_u in zip(bu_users, ign_users):
     else:
         print(f"    ssh keys: {len(bu_u.get('ssh_authorized_keys', []))} key(s)  ✓")
 
-    # v0.6: password_hash parity + bcrypt prefix + placeholder gate.
-    # Cockpit's PAM auth path treats password_hash as the only credential.
-    # A wrong format here means web login silently fails; the placeholder
-    # string is a build-time fail-fast so we never flash a non-credential.
+    # password_hash parity + (if present) bcrypt-prefix + placeholder gate.
+    # The credential-free design bakes NO password (core is passwordless; the
+    # password is set at first boot), so both sides are normally None and this
+    # prints "(none) ✓". The gate only bites if a hash is ever added — then it
+    # must match across both files and be a valid bcrypt, not a leftover
+    # REPLACE_WITH_ placeholder.
     bu_pw = bu_u.get("password_hash")
     ign_pw = ign_u.get("passwordHash")
     if bu_pw != ign_pw:
@@ -261,9 +265,9 @@ for path in sorted(set(bu_files) & set(ign_files)):
                     f"line content identical, likely trailing-newline difference"
                 )
 
-    # v0.6: placeholder-substitution gate. Any REPLACE_WITH_* token still
-    # present in a file body means the operator forgot to substitute a
-    # secret/value and would flash a non-functional host.
+    # Placeholder-substitution gate (defensive). Any REPLACE_WITH_* token still
+    # present in a file body means a value was left unsubstituted and would
+    # flash a non-functional host. The credential-free design uses none.
     if "REPLACE_WITH_" in bu_body:
         problems.append(
             f"{path}: contains a REPLACE_WITH_ placeholder — substitute "

@@ -226,7 +226,7 @@ MaxStartups = 10
 
 
 # /usr/local/bin/noir-wifi — Wi-Fi uplink control across three slots.
-# Mode 0755 explicit (Butane defaults to 0644). Replaces noir-wifi: all
+# Mode 0755 explicit (Butane defaults to 0644). Replaces noir-otherside: all
 # three slot keyfiles (wifi-primary/secondary/tertiary) declare route-metric=50,
 # so any associated Wi-Fi beats bond0 (metric=100); only one associates at a
 # time on wlp99s0. NM does NOT auto-roam between SSIDs, so slot selection is
@@ -1184,12 +1184,11 @@ WantedBy=timers.target
 
 
 # ─── 4. Users ────────────────────────────────────────────────────────────────
-# v0.6: passwordHash on `core` — required for Cockpit web auth via PAM.
-# Substitute with a real bcrypt hash before building. Mint locally on macOS
-# (htpasswd ships in Apache, on the system PATH — no brew install needed):
-#     read -rs PW && printf '%s' "$PW" | htpasswd -niB -C 12 core | cut -d: -f2; unset PW
-# sync_check.py fail-fasts on the placeholder string and on any non-bcrypt
-# prefix ($2a$ / $2b$ / $2y$). Same hash MUST appear in noir.bu line ~80.
+# NO password is baked: `core` ships passwordless (no passwordHash key below —
+# never add one). The core password is set at first boot by `noir-setup` (via
+# chpasswd) and persisted to the data drive; until then Cockpit web login is
+# disabled. SSH-key login + passwordless-sudo work from boot 1. Credential-free
+# by design — see AGENTS.md / BUILD-SPEC.md.
 users = [
     {
         "name": "core",
